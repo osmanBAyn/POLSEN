@@ -37,6 +37,8 @@ import plotly.graph_objects as go
 from fpdf import FPDF
 import tempfile
 from rdkit import DataStructs
+from rdkit.Chem import Fragments
+from rdkit.Chem import GraphDescriptors
 st.set_page_config(
     page_title="POLSEN", 
     page_icon="🧬",
@@ -220,6 +222,8 @@ def load_critic_models():
         models['Solubility'] = joblib.load('xgb_solubility.joblib') 
         models['ThermalCond'] = joblib.load('xgb_thermal_cond.joblib') 
         models['CTE'] = joblib.load('xgb_cte.joblib')
+        models['Recyclability'] = joblib.load('chemical_recyclability.joblib')
+        models['Degradability'] = joblib.load('xgb_degradability.joblib')
         return models
     except Exception as e:
         st.error(f"⚠️ Model Yükleme Hatası! Lütfen 'tg_model.joblib', 'td_model.joblib' ve 'eps_model.joblib' dosyalarının mevcut olduğundan emin olun. Hata: {e}")
@@ -362,6 +366,79 @@ def get_gas_features_combined(smiles):
         return np.concatenate((fp, desc)).reshape(1, -1)
     except:
         return None
+
+# Sütun isimlerini dışarıda (global) bir kere tanımlıyoruz ki GA döngüsünde zaman kaybetmesin
+
+def get_degradability_features(smiles):
+    """Bozunabilirlik modeli için MAX HIZDA özellik çıkarımı (Pandas Yok)."""
+    try:
+        mol = Chem.MolFromSmiles(str(smiles).replace('*', '[H]'))
+        if mol is None: return None
+        
+        desc_vals = [
+            Descriptors.TPSA(mol),
+            Descriptors.MolLogP(mol),
+            Descriptors.MolWt(mol),
+            Descriptors.NumRotatableBonds(mol)
+        ]
+        
+        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=3, nBits=1024)
+        final_arr = np.concatenate([desc_vals, np.array(fp)])
+        
+        # PANDAS İPTAL: Doğrudan XGBoost'un sevdiği 2D Numpy Matrisini döndürüyoruz!
+        return final_arr.reshape(1, -1)
+    except:
+        return None
+
+def get_recyclability_features(smiles):
+    """Geri Dönüşüm modeli için MAX HIZDA özellik çıkarımı (Pandas Yok)."""
+    try:
+        mol = Chem.MolFromSmiles(str(smiles).replace('*', '[H]'))
+        if mol is None: return None
+        
+        AllChem.ComputeGasteigerCharges(mol)
+        charges = [float(atom.GetProp('_GasteigerCharge')) for atom in mol.GetAtoms() if atom.HasProp('_GasteigerCharge')]
+        
+        if charges:
+            max_abs_c = max(abs(c) for c in charges)
+            max_c = max(charges)
+            min_c = min(charges)
+        else:
+            max_abs_c, max_c, min_c = 0.0, 0.0, 0.0
+            
+        ring_info = mol.GetRingInfo()
+        atom_rings = ring_info.AtomRings()
+        
+        try: balaban = GraphDescriptors.BalabanJ(mol)
+        except: balaban = 0.0
+        
+        feats = [
+            0.0, max_abs_c, max_c, min_c,
+            1 if any(len(r) == 3 for r in atom_rings) else 0,
+            1 if any(len(r) == 4 for r in atom_rings) else 0,
+            1 if any(len(r) == 5 for r in atom_rings) else 0,
+            1 if any(len(r) == 6 for r in atom_rings) else 0,
+            1 if any(len(r) >= 7 for r in atom_rings) else 0,
+            ring_info.NumRings(),
+            Descriptors.NumAromaticRings(mol),
+            Descriptors.NumAliphaticRings(mol),
+            Fragments.fr_ester(mol),
+            Fragments.fr_amide(mol),
+            Fragments.fr_ether(mol),
+            Descriptors.MolWt(mol),
+            Descriptors.TPSA(mol),
+            Descriptors.NumRotatableBonds(mol),
+            Descriptors.FractionCSP3(mol),
+            balaban
+        ]
+        
+        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=256)
+        final_arr = np.concatenate([feats, np.array(fp)])
+        
+        # PANDAS İPTAL: Sadece Numpy
+        return final_arr.reshape(1, -1)
+    except:
+        return None
 def cxSelfies(ind1, ind2):
     t1 = list(sf.split_selfies(ind1[0]))
     t2 = list(sf.split_selfies(ind2[0]))
@@ -408,8 +485,15 @@ def evaluate_individual_optimized(individual, models, targets, active_props, ran
     fp = get_morgan_fp(s_smiles)
     
     gas_features = None
+    rec_features = None # Yeni eklenen satır
+    deg_features = None # Yeni eklenen satır
+
     if 'GasPerma' in active_props:
         gas_features = get_gas_features_combined(s_smiles)
+    if 'Recyclability' in active_props: # Yeni eklenen blok
+        rec_features = get_recyclability_features(s_smiles)
+    if 'Degradability' in active_props: # Yeni eklenen blok
+        deg_features = get_degradability_features(s_smiles)
 
     if fp is None: return (1000.0)
 
@@ -423,7 +507,16 @@ def evaluate_individual_optimized(individual, models, targets, active_props, ran
                     preds[prop] = 10 ** log_pred 
                 else:
                     preds[prop] = 0.0
-            
+            elif prop == 'Recyclability': # Yeni eklenen blok
+                if rec_features is not None:
+                    preds[prop] = models[prop].predict(rec_features)[0]
+                else:
+                    preds[prop] = 0.0
+            elif prop == 'Degradability': # Yeni eklenen blok
+                if deg_features is not None:
+                    preds[prop] = models[prop].predict(deg_features)[0]
+                else:
+                    preds[prop] = 0.0
             else:
                 preds[prop] = models[prop].predict(fp)[0]
     
@@ -813,6 +906,8 @@ def run_single_objective_flow(models, generations, targets, active_props, initia
         fp = get_morgan_fp(best_smiles)
         
         gas_features = get_gas_features_combined(best_smiles)
+        rec_features = get_recyclability_features(best_smiles)
+        deg_features = get_degradability_features(best_smiles)
 
         preds = {}
         
@@ -823,7 +918,16 @@ def run_single_objective_flow(models, generations, targets, active_props, initia
                     preds[prop] = 10 ** log_pred
                 else:
                     preds[prop] = 0.0
-            
+            elif prop == 'Recyclability': # Yeni eklenen blok
+                if rec_features is not None:
+                    preds[prop] = models[prop].predict(rec_features)[0]
+                else:
+                    preds[prop] = 0.0
+            elif prop == 'Degradability': # Yeni eklenen blok
+                if deg_features is not None:
+                    preds[prop] = models[prop].predict(deg_features)[0]
+                else:
+                    preds[prop] = 0.0
             else:
                 preds[prop] = models[prop].predict(fp)[0]
         
@@ -1415,7 +1519,10 @@ if models:
         active_props.append('ThermalCond')  
     if st.sidebar.checkbox("Isıl Genleşme (CTE)"): 
         active_props.append('CTE')
-        
+    if st.sidebar.checkbox("Kimyasal Geri Dönüşüm (Entalpi - ΔH)"):
+        active_props.append('Recyclability')
+    if st.sidebar.checkbox("Bozunabilirlik Skoru"):
+        active_props.append('Degradability')
     if not active_props:
         st.sidebar.warning("Lütfen optimize edilecek en az bir hedef seçin.")
         st.stop()
@@ -1435,7 +1542,9 @@ if models:
         'LOI': {'min': 15.0, 'max': 100.0, 'default': 28.0, 'step': 0.5, 'is_int': False},
         'Solubility': {'min': 5.0, 'max': 20.0, 'default': 9.5, 'step': 0.1, 'is_int': False},
         'ThermalCond': {'min': 0.0, 'max': 1.0, 'default': 0.2, 'step': 0.01, 'is_int': False},
-        'CTE': {'min': 0.0, 'max': 300.0, 'default': 60.0, 'step': 5.0, 'is_int': False}
+        'CTE': {'min': 0.0, 'max': 300.0, 'default': 60.0, 'step': 5.0, 'is_int': False},
+        'Recyclability': {'min': -200.0, 'max': 50.0, 'default': -50.0, 'step': 1.0, 'is_int': False},
+        'Degradability': {'min': 0.0, 'max': 5.0, 'default': 2.0, 'step': 0.1, 'is_int': False},
     }
 
     for prop in active_props:
@@ -1573,7 +1682,12 @@ if models:
                     st.image(img, width=400)
                 st.caption("SMILES Kodu:")
                 st.code(best_poly_data['smiles'], language="text")
-
+                st.caption("SELFIES Kodu:")
+                selfies_str = smiles_to_selfies_safe(best_poly_data['smiles'])
+                if selfies_str:
+                    st.code(selfies_str, language="text")
+                else:
+                    st.warning("SELFIES formatına dönüştürülemedi.")
             with col_3d:
                 st.subheader("3D Konformasyon")
                 view, reason = make_3d_view_with_reason(best_poly_data["smiles"])
@@ -1915,7 +2029,6 @@ if models:
                     if img_retro:
                         st.image(img_retro, caption="Modelin Önerdiği Yapı Taşları")
                     st.session_state['retro_manual_text'] = f"AI Tahmini: {prediction}"
-
 
 
 
