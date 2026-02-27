@@ -39,6 +39,34 @@ import tempfile
 from rdkit import DataStructs
 from rdkit.Chem import Fragments
 from rdkit.Chem import GraphDescriptors
+
+# translations.py
+# Eski Hali:
+# from translations import LANGUAGES
+
+# Yeni Hali:
+from lang_dict import LANGUAGES
+
+# Session State'te dil ayarı yoksa TR olarak başlat
+if "lang" not in st.session_state:
+    st.session_state["lang"] = "TR"
+
+# Çeviri fonksiyonumuz
+def _(text_key):
+    return LANGUAGES[st.session_state["lang"]].get(text_key, text_key)
+
+# Sidebar'a Dil Seçici Ekleyelim
+st.sidebar.markdown("### 🌍 Dil / Language")
+selected_lang = st.sidebar.selectbox(
+    "Dil Seçimi / Select Language", 
+    ["TR", "EN"], 
+    index=0 if st.session_state["lang"] == "TR" else 1,
+    label_visibility="collapsed"
+)
+
+if selected_lang != st.session_state["lang"]:
+    st.session_state["lang"] = selected_lang
+    st.rerun()
 st.set_page_config(
     page_title="POLSEN", 
     page_icon="🧬",
@@ -101,7 +129,7 @@ def predict_monomers_local(polymer_smiles):
             ai_prediction = ""
 
     if ai_prediction and " . " in ai_prediction:
-        return f"{ai_prediction} (T5 Modeli)"
+        return f"{ai_prediction} (T5 Model)"
     
     else:
         rules = decompose_polymer(polymer_smiles) 
@@ -125,17 +153,30 @@ COMMON_SOLVENTS = {
     "Metanol": 14.5,
     "Su (Çok Polar)": 23.4
 }
+COMMON_SOLVENTS_HANSEN = {
+    f"{_('hekzan')}": 14.9,
+    f"{_('dietil_eter')}": 14.8,
+    f"{_('toluen')}": 18.7,
+    f"{_('etil asetat')}": 17.9,
+    f"{_('kloroform')}": 23.2,
+    f"{_('aseton')}": 18.6,
+    f"{_('diklorometan')}": 20.9,
+    f"{_('THF')}": 18.4,
+    f"{_('etanol')}": 25.7,
+    f"{_('metanol')}": 28.2,
+    f"{_('water')}": 29.7
+}
 def get_soluble_solvents(pred_val):
-    """Tahmin edilen Hildebrand değerine göre uygun çözücüleri bulur."""
+    """Tahmin edilen Hansen değerine göre uygun çözücüleri bulur."""
     soluble_list = []
     swelling_list = [] 
     
-    for solvent, s_val in COMMON_SOLVENTS.items():
+    for solvent, s_val in COMMON_SOLVENTS_HANSEN.items():
         diff = abs(pred_val - s_val)
         
-        if diff <= 1.8: 
+        if diff <= 3.5: 
             soluble_list.append(solvent)
-        elif diff <= 2.5: 
+        elif diff <= 5: 
             swelling_list.append(solvent)
             
     return soluble_list, swelling_list
@@ -222,8 +263,9 @@ def load_critic_models():
         models['Solubility'] = joblib.load('xgb_solubility.joblib') 
         models['ThermalCond'] = joblib.load('xgb_thermal_cond.joblib') 
         models['CTE'] = joblib.load('xgb_cte.joblib')
-        models['Recyclability'] = joblib.load('chemical_recyclability.joblib')
+        models['Recyclability'] = joblib.load('lgbm_recyclability.joblib')
         models['Degradability'] = joblib.load('xgb_degradability.joblib')
+        models['Hansen'] = joblib.load('xgb_hansen.joblib')
         return models
     except Exception as e:
         st.error(f"⚠️ Model Yükleme Hatası! Lütfen 'tg_model.joblib', 'td_model.joblib' ve 'eps_model.joblib' dosyalarının mevcut olduğundan emin olun. Hata: {e}")
@@ -391,51 +433,85 @@ def get_degradability_features(smiles):
         return None
 
 def get_recyclability_features(smiles):
-    """Geri Dönüşüm modeli için MAX HIZDA özellik çıkarımı (Pandas Yok)."""
+    """Yeni LGBM Recyclability modeli için MAX HIZDA özellik çıkarımı (Pandas Yok)."""
+    try:
+        # DİKKAT: Eğitimdeki backbone hesabı '*' üzerinden yapıldığı için replace('*', '[H]') KULLANMIYORUZ!
+        mol = Chem.MolFromSmiles(str(smiles))
+        if mol is None: return None
+
+        # --- COMPUTATIONAL LENGTH METRICS ---
+        n_total = mol.GetNumHeavyAtoms()
+        inv_len_total = 1.0 / n_total if n_total > 0 else 0
+
+        dummy_indices = [a.GetIdx() for a in mol.GetAtoms() if a.GetSymbol() == '*']
+        if len(dummy_indices) >= 2:
+            try:
+                path = Chem.GetShortestPath(mol, dummy_indices[0], dummy_indices[1])
+                n_backbone = len(path) - 2
+                inv_len_backbone = 1.0 / n_backbone if n_backbone > 0 else 0
+                branching_ratio = n_total / n_backbone if n_backbone > 0 else 1
+            except:
+                inv_len_backbone = inv_len_total
+                branching_ratio = 1.0
+        else:
+            inv_len_backbone = inv_len_total
+            branching_ratio = 1.0
+
+        # --- Temel Fizikokimyasal Özellikler ---
+        num_rings = mol.GetRingInfo().NumRings()
+        num_aromatic_rings = Descriptors.NumAromaticRings(mol)
+        num_aliphatic_rings = Descriptors.NumAliphaticRings(mol)
+        mol_wt = Descriptors.MolWt(mol)
+        tpsa = Descriptors.TPSA(mol)
+        logp = Descriptors.MolLogP(mol)
+        fraction_csp3 = Descriptors.FractionCSP3(mol)
+
+        # Eğitimdeki DİCT sırasının BİREBİR aynısı (İlk 10 kolon)
+        desc_vals = [
+            inv_len_total,
+            inv_len_backbone,
+            branching_ratio,
+            num_rings,
+            num_aromatic_rings,
+            num_aliphatic_rings,
+            mol_wt,
+            tpsa,
+            logp,
+            fraction_csp3
+        ]
+
+        # --- Morgan Fingerprints (Son 1024 kolon) ---
+        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=3, nBits=1024)
+
+        # Hızlıca birleştir ve 2D Numpy Matrisine çevir
+        final_arr = np.concatenate([desc_vals, np.array(fp)])
+        
+        return final_arr.reshape(1, -1)
+    except:
+        return None
+def get_hansen_features(smiles):
+    """Hansen Çözünürlük modeli için BİREBİR EŞLEŞEN özellik çıkarımı (1030 Sütun)."""
     try:
         mol = Chem.MolFromSmiles(str(smiles).replace('*', '[H]'))
         if mol is None: return None
         
-        AllChem.ComputeGasteigerCharges(mol)
-        charges = [float(atom.GetProp('_GasteigerCharge')) for atom in mol.GetAtoms() if atom.HasProp('_GasteigerCharge')]
+        # 1. Morgan Fingerprint (Radius=2, nBits=1024)
+        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=1024)
         
-        if charges:
-            max_abs_c = max(abs(c) for c in charges)
-            max_c = max(charges)
-            min_c = min(charges)
-        else:
-            max_abs_c, max_c, min_c = 0.0, 0.0, 0.0
-            
-        ring_info = mol.GetRingInfo()
-        atom_rings = ring_info.AtomRings()
-        
-        try: balaban = GraphDescriptors.BalabanJ(mol)
-        except: balaban = 0.0
-        
-        feats = [
-            0.0, max_abs_c, max_c, min_c,
-            1 if any(len(r) == 3 for r in atom_rings) else 0,
-            1 if any(len(r) == 4 for r in atom_rings) else 0,
-            1 if any(len(r) == 5 for r in atom_rings) else 0,
-            1 if any(len(r) == 6 for r in atom_rings) else 0,
-            1 if any(len(r) >= 7 for r in atom_rings) else 0,
-            ring_info.NumRings(),
-            Descriptors.NumAromaticRings(mol),
-            Descriptors.NumAliphaticRings(mol),
-            Fragments.fr_ester(mol),
-            Fragments.fr_amide(mol),
-            Fragments.fr_ether(mol),
+        # 2. Eğitim defterindeki 6 ekstra descriptor (Sırası birebir aynı)
+        desc_vals = [
             Descriptors.MolWt(mol),
+            Descriptors.MolLogP(mol),
+            Descriptors.NumHDonors(mol),
+            Descriptors.NumHAcceptors(mol),
             Descriptors.TPSA(mol),
-            Descriptors.NumRotatableBonds(mol),
-            Descriptors.FractionCSP3(mol),
-            balaban
+            Descriptors.NumRotatableBonds(mol)
         ]
         
-        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=256)
-        final_arr = np.concatenate([feats, np.array(fp)])
+        # 3. Önce FP, Sonra Descriptors olacak şekilde birleştir
+        final_arr = np.concatenate([np.array(fp), desc_vals])
         
-        # PANDAS İPTAL: Sadece Numpy
+        # XGBoost'un beklediği 2D Numpy formatı
         return final_arr.reshape(1, -1)
     except:
         return None
@@ -487,13 +563,15 @@ def evaluate_individual_optimized(individual, models, targets, active_props, ran
     gas_features = None
     rec_features = None # Yeni eklenen satır
     deg_features = None # Yeni eklenen satır
-
+    han_features = None # Yeni satır
     if 'GasPerma' in active_props:
         gas_features = get_gas_features_combined(s_smiles)
     if 'Recyclability' in active_props: # Yeni eklenen blok
         rec_features = get_recyclability_features(s_smiles)
     if 'Degradability' in active_props: # Yeni eklenen blok
         deg_features = get_degradability_features(s_smiles)
+    if 'Hansen' in active_props: # Yeni eklenen blok
+        han_features = get_hansen_features(s_smiles)
 
     if fp is None: return (1000.0)
 
@@ -515,6 +593,11 @@ def evaluate_individual_optimized(individual, models, targets, active_props, ran
             elif prop == 'Degradability': # Yeni eklenen blok
                 if deg_features is not None:
                     preds[prop] = models[prop].predict(deg_features)[0]
+                else:
+                    preds[prop] = 0.0
+            elif prop == 'Hansen':
+                if han_features is not None:
+                    preds[prop] = models[prop].predict(han_features)[0]
                 else:
                     preds[prop] = 0.0
             else:
@@ -801,19 +884,19 @@ def run_single_objective_flow(models, generations, targets, active_props, initia
     for ind, fit in zip(pop, fitnesses):
         ind.fitness.values = fit
 
-    st.markdown("### 🧬 Evrimsel Süreç İzleme Paneli")
+    st.markdown(f"{_('evolution_panel')}")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     col_chart1, col_chart2 = st.columns(2)
     with col_chart1:
-        st.caption("Yakınsama (Convergence)")
+        st.caption(f"{_('convergence_chart')}")
         chart_fitness_placeholder = st.empty()
     with col_chart2:
-        st.caption("Popülasyon Çeşitliliği (Diversity)")
+        st.caption(f"{_('diversity_chart')}")
         chart_diversity_placeholder = st.empty()
 
-    log_expander = st.expander("GA Logları (Detaylı)", expanded=False)
+    log_expander = st.expander("GA Logs", expanded=False)
     with log_expander:
         log_placeholder = st.empty()
         mutation_placeholder = st.empty()
@@ -871,29 +954,29 @@ def run_single_objective_flow(models, generations, targets, active_props, initia
         history["diversity"].append(std_val)
         
         log_data.append({
-            "Nesil": gen + 1,
-            "En İyi Hata": round(best_val, 4),
-            "Ortalama (Valid)": round(mean_val, 4),
-            "Canlılık Oranı %": round(survival_rate, 1) 
+            f"{_('gen')}": gen + 1,
+            f"{_('best_fitness')}": round(best_val, 4),
+            f"{_('avg_fitness')}": round(mean_val, 4),
+            f"{_('survival_rate')}": round(survival_rate, 1)
         })
 
         if gen % 2 == 0 or gen == generations - 1:
             progress_bar.progress((gen + 1) / generations)
-            status_text.markdown(f"**Nesil {gen+1}/{generations}** | En İyi Hata: `{best_val:.4f}` | Çeşitlilik: `{std_val:.4f}`")
+            status_text.markdown(f"**Nesil {gen+1}/{generations}** | {_('best_fitness')}: `{best_val:.4f}` | {_('diversity_chart')}: `{std_val:.4f}`")
             
             df_fit = pd.DataFrame({
-                "En İyi (Best)": history["best_fitness"],
-                "Ortalama (Avg)": history["avg_fitness"]
+                f"{_('best_fitness')}": history["best_fitness"],
+                f"{_('avg_fitness')}": history["avg_fitness"]
             })
             chart_fitness_placeholder.line_chart(df_fit, height=250)
             
             df_div = pd.DataFrame({
-                "Çeşitlilik (Std Dev)": history["diversity"]
+                f"{_('diversity_chart')}": history["diversity"]
             })
             chart_diversity_placeholder.line_chart(df_div, height=250)
             
             df_log = pd.DataFrame(log_data)
-            log_placeholder.dataframe(df_log.sort_values(by="Nesil", ascending=False).head(5), use_container_width=True)
+            log_placeholder.dataframe(df_log.sort_values(by=f"{_('gen')}", ascending=False).head(5), use_container_width=True)
             mutation_placeholder.json(mutation_stats)
 
     best_ind = tools.selBest(pop, 5)[0]
@@ -908,7 +991,7 @@ def run_single_objective_flow(models, generations, targets, active_props, initia
         gas_features = get_gas_features_combined(best_smiles)
         rec_features = get_recyclability_features(best_smiles)
         deg_features = get_degradability_features(best_smiles)
-
+        han_features = get_hansen_features(best_smiles)
         preds = {}
         
         for prop in models.keys():
@@ -926,6 +1009,11 @@ def run_single_objective_flow(models, generations, targets, active_props, initia
             elif prop == 'Degradability': # Yeni eklenen blok
                 if deg_features is not None:
                     preds[prop] = models[prop].predict(deg_features)[0]
+                else:
+                    preds[prop] = 0.0
+            elif prop == 'Hansen':
+                if han_features is not None:
+                    preds[prop] = models[prop].predict(han_features)[0]
                 else:
                     preds[prop] = 0.0
             else:
@@ -1088,17 +1176,17 @@ def calculate_green_score(smiles):
     # Ester 
     if mol.HasSubstructMatch(Chem.MolFromSmarts("[C;!R](=[O])[O;!R]")):
         score += 3.0
-        notes.append("Ester bağı (Hidroliz olabilir)")
+        notes.append(f"{_('ester')}")
         
     # Amid 
     if mol.HasSubstructMatch(Chem.MolFromSmarts("[C;!R](=[O])[N;!R]")):
         score += 2.0
-        notes.append("Amid bağı (Biyo-bozunurluk potansiyeli)")
+        notes.append(f"{_('amide')}")
         
     # Eter
     if mol.HasSubstructMatch(Chem.MolFromSmarts("[C][O][C]")):
         score += 1.0
-        notes.append("Eter grubu (Hidrofilik özellik)")
+        notes.append(f"{_('ether')}")
 
     # Halojen
     halogens = [atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetSymbol() in ['F', 'Cl', 'Br']]
@@ -1106,13 +1194,13 @@ def calculate_green_score(smiles):
         count = len(halogens)
         penalty = min(4.0, count * 1.0) 
         score -= penalty
-        notes.append(f"{count} adet Halojen atomu (Kalıcılık/Toksisite riski)")
+        notes.append(f"{count} {_('halogen')}")
         
     # Aromatik
     aromatic_atoms = [atom for atom in mol.GetAtoms() if atom.GetIsAromatic()]
     if len(aromatic_atoms) > 4: 
         score -= 2.0
-        notes.append("Yüksek Aromatiklik (Zor parçalanma)")
+        notes.append(f"{_('aromatic')}")
 
     score = max(1.0, min(10.0, score)) 
     
@@ -1444,7 +1532,7 @@ def calculate_novelty_optimized(generated_smiles, ref_smiles_list):
     
     return max_sim, most_similar_smiles
 
-st.markdown('<h1 class="main-title"> POLSEN <br><span style="font-size:1.5rem; color:#666; font-weight:400;">Yapay Zeka Destekli Polimer Tasarlayıcısı</span></h1>', unsafe_allow_html=True)
+st.markdown(f'<h1 class="main-title"> POLSEN <br><span style="font-size:1.5rem; color:#666; font-weight:400;">{_("app_subtitle")}</span></h1>', unsafe_allow_html=True)
 
 models = load_critic_models()
 ALL_PROPS = list(models.keys()) 
@@ -1488,46 +1576,48 @@ def add_synced_input(prop_key, label, min_val, max_val, default, step, is_int=Fa
     return st.session_state[s_key]
 
 if models:
-    st.sidebar.header("Hedef Seçimi")
+    st.sidebar.header(f'{_("sidebar_target_selection")}')
     
     active_props = []
     
-    st.sidebar.markdown("### Dahil Edilecek Özellikler")
-    if st.sidebar.checkbox("Tg (Camsı Geçiş Sıcaklığı)", value=True):
+    st.sidebar.markdown(f'### {_("sidebar_included_props")}')
+    if st.sidebar.checkbox(f'{_("prop_tg")}', value=True):
         active_props.append('Tg')
-    if st.sidebar.checkbox("Td (Bozunma Sıcaklığı)"):
+    if st.sidebar.checkbox(f'{_("prop_td")}'):
         active_props.append('Td')
-    if st.sidebar.checkbox("EPS (Dielektrik Sabiti)"):
+    if st.sidebar.checkbox(f'{_("prop_eps")}'):
         active_props.append('EPS')
-    if st.sidebar.checkbox("Tm (Erime Sıcaklığı)"):
+    if st.sidebar.checkbox(f'{_("prop_tm")}'):
         active_props.append('Tm')
-    if st.sidebar.checkbox("Bandgap Bulk (Elektriksel Band Aralığı - Bulk)"):
+    if st.sidebar.checkbox(f'{_("prop_bandgap_bulk")}'):
         active_props.append('BandgapBulk')
-    if st.sidebar.checkbox("Bandgap Chain (Elektriksel Band Aralığı - Zincir)"):
+    if st.sidebar.checkbox(f'{_("prop_bandgap_chain")}'):
         active_props.append('BandgapChain')
-    if st.sidebar.checkbox("Bandgap Crystal (Elektriksel Band Aralığı - Kristal)"):
+    if st.sidebar.checkbox(f'{_("prop_bandgap_crystal")}'):
         active_props.append('BandgapCrystal')
-    if st.sidebar.checkbox("Gas Permeability (Gaz Geçirgenliği)"):
+    if st.sidebar.checkbox(f'{_("prop_gas_perma")}'):
         active_props.append('GasPerma')
-    if st.sidebar.checkbox("Refractive Index (Kırılma İndeksi)"):
+    if st.sidebar.checkbox(f'{_("prop_refractive")}'):
         active_props.append('Refractive')
-    if st.sidebar.checkbox("LOI (Yanıcılık İndeksi)"): 
+    if st.sidebar.checkbox(f'{_("prop_loi")}'): 
         active_props.append('LOI')
-    if st.sidebar.checkbox("Çözünürlük (Hildebrand)"): 
+    if st.sidebar.checkbox(f'{_("prop_solubility")}'): 
         active_props.append('Solubility') 
-    if st.sidebar.checkbox("Isıl İletkenlik (Thermal Cond.)"): 
+    if st.sidebar.checkbox(f'{_("prop_thermal_cond")}'): 
         active_props.append('ThermalCond')  
-    if st.sidebar.checkbox("Isıl Genleşme (CTE)"): 
+    if st.sidebar.checkbox(f'{_("prop_cte")}'): 
         active_props.append('CTE')
-    if st.sidebar.checkbox("Kimyasal Geri Dönüşüm (Entalpi - ΔH)"):
+    if st.sidebar.checkbox(f'{_("prop_recyclability")}'):
         active_props.append('Recyclability')
-    if st.sidebar.checkbox("Bozunabilirlik Skoru"):
+    if st.sidebar.checkbox(f'{_("prop_degradability")}'):
         active_props.append('Degradability')
+    if st.sidebar.checkbox(f'{_("prop_hansen")}'):
+        active_props.append('Hansen')
     if not active_props:
-        st.sidebar.warning("Lütfen optimize edilecek en az bir hedef seçin.")
+        st.sidebar.warning(_("warn_no_target"))
         st.stop()
 
-    st.sidebar.markdown("### Hedef Değerler")
+    st.sidebar.markdown(f'### {_("sidebar_target_values")}')
     targets = {}
     ranges = {
         'Tg': {'min': -150.0, 'max': 300.0, 'default': 200.0, 'step': 1.0, 'is_int': False},
@@ -1543,45 +1633,46 @@ if models:
         'Solubility': {'min': 5.0, 'max': 20.0, 'default': 9.5, 'step': 0.1, 'is_int': False},
         'ThermalCond': {'min': 0.0, 'max': 1.0, 'default': 0.2, 'step': 0.01, 'is_int': False},
         'CTE': {'min': 0.0, 'max': 300.0, 'default': 60.0, 'step': 5.0, 'is_int': False},
-        'Recyclability': {'min': -200.0, 'max': 50.0, 'default': -50.0, 'step': 1.0, 'is_int': False},
-        'Degradability': {'min': 0.0, 'max': 5.0, 'default': 2.0, 'step': 0.1, 'is_int': False},
+        'Recyclability': {'min': -60.0, 'max': 40.0, 'default': -15.0, 'step': 1.0, 'is_int': False},
+        'Degradability': {'min': 0.0, 'max': 2.0, 'default': 0.5, 'step': 0.01, 'is_int': False},
+        'Hansen': {'min': 10.0, 'max': 50.0, 'default': 20.0, 'step': 0.1, 'is_int': False},
     }
 
     for prop in active_props:
         if prop in ranges:
             r = ranges[prop]
             label = prop
-            if prop == 'Tg': label = 'Hedef Tg (°C)'
-            elif prop == 'Td': label = 'Hedef Td (°C)'
-            elif prop == 'Tm': label = 'Hedef Tm (°C)'
-            elif prop == 'EPS': label = 'Hedef EPS'
-            elif prop == 'BandgapBulk': label = 'Hedef BandgapBulk (eV)'
-            elif prop == 'BandgapChain': label = 'Hedef BandgapChain (eV)'
-            elif prop == 'BandgapCrystal': label = 'Hedef BandgapCrystal (eV)'
-            elif prop == 'GasPerma': label = 'Hedef GasPerma'
-            elif prop == 'Refractive': label = 'Hedef Refractive Index'
+            if prop == 'Tg': label = f'{_("target")} Tg (°C)'
+            elif prop == 'Td': label = f'{_("target")} Td (°C)'
+            elif prop == 'Tm': label = f'{_("target")} Tm (°C)'
+            elif prop == 'EPS': label = f'{_("target")} EPS'
+            elif prop == 'BandgapBulk': label = f'{_("target")} BandgapBulk (eV)'
+            elif prop == 'BandgapChain': label = f'{_("target")} BandgapChain (eV)'
+            elif prop == 'BandgapCrystal': label = f'{_("target")} BandgapCrystal (eV)'
+            elif prop == 'GasPerma': label = f'{_("target")} GasPerma'
+            elif prop == 'Refractive': label = f'{_("target")} Refractive Index'
 
             val = add_synced_input(prop, label, r['min'], r['max'], r['default'], r['step'], is_int=r['is_int'])
             targets[prop] = val
         else:
-            targets[prop] = st.sidebar.number_input(f"Hedef {prop}:", value=0.0)
+            targets[prop] = st.sidebar.number_input(f'{_("target")} {prop}:', value=0.0)
 
     # 3. GA Parametreleri
-    generations = st.sidebar.slider("Evrim Nesli Sayısı", 10, 300, 10)
+    generations = st.sidebar.slider(f'{_("sidebar_generations")}', 10, 300, 10)
 
     initial_selfies, reference_smiles = get_initial_population()
     st.sidebar.divider()
-    st.sidebar.markdown("LLM ChatBot Ayarları")
-    api_key = st.sidebar.text_input("API Key", type="password", help="AI yorumu almak için https://aistudio.google.com/app/apikey adresinden ücretsiz anahtar alabilirsiniz.")
-    if st.sidebar.button("Hedefi Ara", type="primary"):
+    st.sidebar.markdown(f'{_("sidebar_llm_settings")}')
+    api_key = st.sidebar.text_input("API Key", type="password", help=f"{_('api_key_explanation')}")
+    if st.sidebar.button(f'{_("sidebar_btn_search")}', type="primary"):
         
         if not initial_selfies:
-            st.error("Başlangıç popülasyonu boş veya geçersiz.")
+            st.error(_("warn_empty_pop"))
             st.stop()
             
-        with st.spinner(f'Genetik Algoritma Çalışıyor... Hedefler: {", ".join(active_props)}'):
+        with st.spinner(f'{_("msg_optimizing")} {", ".join(active_props)}'):
             best_poly_data, history = run_single_objective_flow(models, generations, targets, active_props, initial_selfies, ranges)
-
+    
         if best_poly_data:
             st.session_state['ga_results'] = best_poly_data
             st.session_state['ga_history'] = history
@@ -1598,18 +1689,18 @@ if models:
         
         preds = best_poly_data['preds']
         
-        st.success("✅ Optimizasyon Başarıyla Tamamlandı!")
+        st.success(f"{_('msg_success')}")
         
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Genel", "Yapısal Analiz", "Evrim Geçmişi", "Raporlama", "ChatBot", "Retrosentez"])
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([f"{_('tab_general')}", f"{_('tab_structural')}", f"{_('tab_evolution')}", f"{_('tab_report')}", f"{_('tab_chatbot')}", f"{_('tab_retro')}"])
         with tab1:
             col_main, col_score, col_green = st.columns([2, 1, 1])
             
             with col_main:
-                st.markdown(f"### Toplam Hata: **{best_poly_data['total_error']:.4f}**")
+                st.markdown(f"### {_('metric_total_error')} **{best_poly_data['total_error']:.4f}**")
                 
             with col_score:
                 sa = get_sa_score_local(best_poly_data['smiles'])
-                st.metric("Sentez Zorluğu (SA)", f"{sa:.2f}", help="1 (Kolay) - 10 (Zor)")
+                st.metric(f"{_('metric_sa_score')}", f"{sa:.2f}", help=f"1 ({_('easy')}) - 10 ({_('hard')})")
                 
             with col_green:
                 g_score, g_note, g_color = calculate_green_score(best_poly_data['smiles'])
@@ -1622,39 +1713,39 @@ if models:
                 """, unsafe_allow_html=True)
             
             if g_note:
-                st.caption(f"**Çevresel Analiz:** {g_note}")
+                st.caption(f"**{_('env_analysis')}** {g_note}")
 
             st.divider()
-            if 'Solubility' in preds:
-                sol_val = preds['Solubility']
+            if 'Hansen' in preds:
+                sol_val = preds['Hansen']
                 solvents, partials = get_soluble_solvents(sol_val)
                 
-                st.markdown("Tahmini Çözünürlük Analizi")
+                st.markdown(f"### {_('solubility_analysis')}")
                 c1, c2 = st.columns(2)
                 
                 with c1:
-                    st.info(f"**Çözünmesi Beklenenler:**")
+                    st.info(f"**{_('soluble_in')}**")
                     if solvents:
                         for s in solvents:
                             st.markdown(f"- ✅ {s}")
                     else:
-                        st.warning("Bu polimer çok dirençli görünüyor (veya çok özel bir çözücü gerektiriyor).")
+                        st.warning(f"{_('no_solubility')}")
                 
                 with c2:
-                    st.warning(f"**Şişme / Zor Çözünme Beklenenler:**")
+                    st.warning(f"**{_('swelling_in')}**")
                     if partials:
                         for s in partials:
                             st.markdown(f"- ⚠️ {s}")
                     else:
                         st.write("-")
                 
-                st.caption(f"*Analiz, 'Benzer Benzeri Çözer' ilkesine göre Polimer (δ={sol_val:.1f}) ve Çözücü arasındaki Hildebrand farkına dayanır.*")
+                st.caption(f"*{_('solubility_explanation_1')}{sol_val:.1f}) {_('solubility_explanation_2')}")
             cols = st.columns(3)
             for idx, prop in enumerate(ALL_PROPS):
                 with cols[idx % 3]:
                     is_active = prop in saved_active_props
                     target_val = saved_targets.get(prop, '-')
-                    target_text = f"Hedef: {target_val}" if is_active else "Takip Dışı"
+                    target_text = f"{_('target')}: {target_val}" if is_active else f"{_('takip_disi')}"
                     border_color = "#2ecc71" if is_active else "#95a5a6"
                     pred_value = preds[prop]
                     
@@ -1666,30 +1757,30 @@ if models:
                     </div>
                     """, unsafe_allow_html=True)
             st.divider()
-            st.subheader("Hedef Uyumluluk Analizi")
+            st.subheader(f"{_('radar_title')}")
             if len(saved_active_props) >= 3:
                     fig = create_radar_chart(preds, saved_targets, saved_active_props, ranges)
                     st.plotly_chart(fig, use_container_width=True)
             else:
-                    st.info("Radar grafiği için en az 3 özellik (Örn: Tg, LOI, CTE) seçmelisiniz.")
+                    st.info(f"{_('radar_warning')}")
                     st.progress(100) 
         with tab2:
             col_2d, col_3d = st.columns(2)
             with col_2d:
-                st.subheader("2D Yapı (Teknik Çizim)")
+                st.subheader(f"{_('2d_structure')}")
                 img = draw_2d_molecule(best_poly_data['smiles'])
                 if img:
                     st.image(img, width=400)
-                st.caption("SMILES Kodu:")
+                st.caption(f"SMILES : {_('code')}")
                 st.code(best_poly_data['smiles'], language="text")
-                st.caption("SELFIES Kodu:")
+                st.caption(f"SELFIES : {_('code')}")
                 selfies_str = smiles_to_selfies_safe(best_poly_data['smiles'])
                 if selfies_str:
                     st.code(selfies_str, language="text")
                 else:
                     st.warning("SELFIES formatına dönüştürülemedi.")
             with col_3d:
-                st.subheader("3D Konformasyon")
+                st.subheader(f"{_('3d_structure')}")
                 view, reason = make_3d_view_with_reason(best_poly_data["smiles"])
                 if view:
                     showmol(view, height=400, width=400)
@@ -1698,62 +1789,62 @@ if models:
             
             is_avail, cid, name = check_pubchem_availability(best_poly_data['smiles'])
             if is_avail:
-                 st.info(f"Bu molekül PubChem'de kayıtlı: **{name}** (CID: {cid})")
+                 st.info(f"{_('kayitli')} **{name}** (CID: {cid})")
             st.divider()
-            st.subheader("Özgünlük Analizi (Novelty Search)")
+            st.subheader(f"{_('novelty_search')}")
             
             similarity_score, similar_smi = calculate_novelty_optimized(best_poly_data['smiles'], reference_smiles)
             
             c1, c2 = st.columns([1, 3])
             
             with c1:
-                st.metric("Eğitim Setine Benzerlik", f"%{similarity_score*100:.1f}")
+                st.metric(f"{_('similarity_to_train')}", f"%{similarity_score*100:.1f}")
                 
             with c2:
                 if similarity_score > 0.99:
-                    st.error(f" **Kopya:** Yapay zeka eğitim setindeki bir veriyi ezberlemiş.")
-                    st.code(f"Benzer Kayıt: {similar_smi}")
+                    st.error(f"{_('copy')}")
+                    st.code(f"{_('benzer')} {similar_smi}")
                 elif similarity_score > 0.85:
-                    st.warning(f"**Türev:** Eğitim setindeki bir yapıya çok benziyor.")
-                    with st.expander("Benzer Yapıyı Gör"):
+                    st.warning(f"{_('turev')}")
+                    with st.expander(f"{_('benzer_yapi')}"):
                         st.code(similar_smi)
                 else:
-                    st.success(f" **KEŞİF:** Bu yapı eğitim setinde YOK! Tamamen özgün bir tasarım.")
-                    st.caption(f"En yakın benzerlik sadece %{similarity_score*100:.1f} oranında.")
+                    st.success(f"{_('novel')}")
+                    st.caption(f" {_('closest_sim')}: %{similarity_score*100:.1f}.")
             
             st.progress(similarity_score)
-            st.caption("*Benzerlik, Tanimoto İndeksi (Morgan Fingerprints) kullanılarak hesaplanmıştır.*")
+            st.caption(f"{_('novelty_explanation')}")
 
         with tab3:
-            st.subheader("Genetik Algoritma Performans Raporu")
+            st.subheader(f"{_('genetic_algorithm_report')}")
             
             if 'best_fitness' in history and len(history['best_fitness']) > 0:
                 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
                 
                 gens = range(len(history['best_fitness']))
                 
-                ax1.plot(gens, history['best_fitness'], label='En İyi Birey (Best)', color='green', linewidth=2)
-                ax1.plot(gens, history['avg_fitness'], label='Popülasyon Ortalaması (Avg)', color='blue', linestyle='--', alpha=0.7)
+                ax1.plot(gens, history['best_fitness'], label=f'{_("best_fitness")}', color='green', linewidth=2)
+                ax1.plot(gens, history['avg_fitness'], label=f'{_("avg_fitness")}', color='blue', linestyle='--', alpha=0.7)
                 ax1.set_ylabel('Hata Skoru')
-                ax1.set_title('Yakınsama Analizi (Convergence)', fontweight='bold')
+                ax1.set_title(f'{_("convergence_chart")}', fontweight='bold')
                 ax1.legend()
                 ax1.grid(True, which='both', linestyle='--', alpha=0.5)
                 
-                ax2.plot(gens, history['diversity'], label='Standart Sapma (Diversity)', color='red', linewidth=2)
+                ax2.plot(gens, history['diversity'], label=f'{_("diversity_chart")}', color='red', linewidth=2)
                 ax2.fill_between(gens, history['diversity'], color='red', alpha=0.1)
                 ax2.set_ylabel('Çeşitlilik (Std Dev)')
                 ax2.set_xlabel('Jenerasyon')
-                ax2.set_title('Popülasyon Çeşitliliği (Diversity)', fontweight='bold')
+                ax2.set_title(f'{_("diversity_chart")}', fontweight='bold')
                 ax2.legend()
                 ax2.grid(True, which='both', linestyle='--', alpha=0.5)
                 
                 plt.tight_layout()
                 st.pyplot(fig)
                 
-                st.info("""
-                **Bu Grafikler Nasıl Okunur?**
-                * **Yakınsama (Üst):** Yeşil çizgi sürekli düşmeli ve bir noktada yataylaşmalıdır (Plateau). Mavi çizgi yeşile çok yaklaşırsa popülasyon "öğrenmiş" demektir.
-                * **Çeşitlilik (Alt):** Kırmızı çizginin sıfıra çok hızlı düşmemesi gerekir. Sıfıra düşerse model "Erken Yakınsama (Premature Convergence)" tuzağına düşmüştür; yani arama uzayını yeterince taramadan bir sonuca saplanmıştır.
+                st.info(f"""
+
+                {_("how_to_read")}
+
                 """)
             else:
                 st.warning("Henüz grafik çizilecek veri yok.")
@@ -1873,8 +1964,8 @@ if models:
             #             st.dataframe(df_results)
 
         with tab4:
-            st.header("💾 Raporlama")
-            st.markdown("Proje verilerini CSV veya detaylı PDF raporu olarak dışa aktarabilirsiniz.")
+            st.header(f"💾 {_('report_header')}")
+            st.markdown(f"{_('report_desc')}")
             
             c1, c2 = st.columns(2)
             
@@ -1889,7 +1980,7 @@ if models:
 
             with c1:
                 st.download_button(
-                    label="Veri Setini İndir (.csv)",
+                    label=f"{_('btn_download_csv')}",
                     data=csv_best,
                     file_name="polimer_data.csv",
                     mime="text/csv"
@@ -1897,8 +1988,8 @@ if models:
             
             st.divider()
             
-            st.subheader("PDF Raporu")
-            st.info("Bu rapor; tüm tahminleri, molekül yapısını, AI yorumlarını ve varsa sentez planını içerir.")
+            st.subheader(f"{_('pdf_report')}")
+            st.info(f"{_('pdf_report_info')}")
 
             gen_ai_analysis = st.session_state.get('ai_analysis', "Genel AI analizi yapilmadi.")
             
@@ -1907,8 +1998,8 @@ if models:
             
             full_retro_info = manual_retro + "\n\n--- AI Sentez Notlari ---\n" + ai_retro
 
-            if st.button("PDF Raporu Oluştur", type="primary", use_container_width=True):
-                with st.spinner("Rapor derleniyor..."):
+            if st.button(f"{_('btn_create_pdf')}", type="primary", use_container_width=True):
+                with st.spinner(f"{_('report_getting_ready')}..."):
                     pdf_data = create_pdf_report(
                         best_poly_data, 
                         saved_targets, 
@@ -1917,9 +2008,9 @@ if models:
                         full_retro_info
                     )
                     
-                    st.success("Rapor hazır!")
+                    st.success(f"{_('report_ready')}")
                     st.download_button(
-                        label="📥 PDF Dosyasını İndir",
+                        label=f"📥 {_('download')} {_('pdf_report')}",
                         data=pdf_data,
                         file_name="PolimerX_Final_Raporu.pdf",
                         mime="application/pdf",
@@ -1927,12 +2018,12 @@ if models:
                     )
         with tab5:
             st.subheader("ChatBot")
-            st.markdown("Polimer yapısı ve tahmin edilen özellikler hakkında detaylı kimyasal yorum almak için AI destekli ChatBot'u kullanın.")
+            st.markdown(f"{_('chatbot_desc')}")
             if not api_key:
-                st.info("Bu polimer hakkında detaylı kimyasal yorum almak için sol menüden **Google Gemini API Key** girmelisiniz.")
-                st.markdown("Ücretsiz API Key Almak İçin Tıkla](https://aistudio.google.com/app/apikey)")
+                st.info(f"{_('chatbot_no_api')}")
+                st.markdown(f"{_('get_free_api')}")
             else:
-                if st.button("Polimeri Analiz Et", type="primary"):
+                if st.button(f"{_('analyze_polymer')}", type="primary"):
                     analysis_result = get_ai_interpretation(
                         api_key, 
                         best_poly_data['smiles'], 
@@ -1947,50 +2038,50 @@ if models:
                 elif 'ai_analysis' in st.session_state:
                     st.markdown(st.session_state['ai_analysis'])
         with tab6:
-            st.header("Retrosentez Analizi")
+            st.header(f"{_('retro_analysis_header')}")
             
             target_smiles = best_poly_data['smiles']
             
-            st.subheader("1. Yapısal Ayrıştırma")
+            st.subheader(f"1. {_('retro_structural')}")
             retro_results = decompose_polymer(target_smiles)
             
-            monomer_info_text = "Otomatik analiz yapilmadi."
+            monomer_info_text = f"{_('retro_auto_failed')}"
             
             if retro_results:
                 best_route = retro_results[0]
                 
-                monomer_info_text = f"Yontem: {best_route['type']}\nMekanizma: {best_route['mechanism']}\n"
+                monomer_info_text = f"{_('yontem')}: {best_route['type']}\n{_('mechanism')}: {best_route['mechanism']}\n"
                 
-                st.info(f"**Algılanan Sentez Türü:** {best_route['type']}")
-                st.write(f"**Mekanizma:** {best_route['mechanism']}")
+                st.info(f"**{_('yontem')}:** {best_route['type']}")
+                st.write(f"**{_('mechanism')}:** {best_route['mechanism']}")
                 
-                st.markdown("**Olası Başlangıç Monomerleri:**")
+                st.markdown(f"{_('baslangic_monomerleri')}")
                 img_retro = draw_retrosynthesis_grid(best_route['monomers'])
                 if img_retro: st.image(img_retro)
 
-                st.markdown("#### Ticari Bulunabilirlik")
+                st.markdown(f"{_('commercial_check')}")
                 found_monomers = []
                 for i, m in enumerate(best_route['monomers']):
                     col_code, col_check = st.columns([3, 1])
                     with col_code:
                         st.code(f"Monomer {i+1}: {m}")
                     with col_check:
-                        if st.button(f"Kontrol #{i+1}", key=f"chk_{i}"):
+                        if st.button(f"{_('control')} #{i+1}", key=f"chk_{i}"):
                             is_avail, cid, name = check_commercial_availability(m)
                             if is_avail:
-                                st.success(f"Var: {name}")
+                                st.success(f"{_('kayitli')}: {name}")
                                 found_monomers.append(name)
                             else:
-                                st.error("Ticari kayit yok")
+                                st.error(f"{_('kayitli_degil')}")
                 
                 if found_monomers:
-                    monomer_info_text += f"\nTicari Kaydi Olanlar: {', '.join(found_monomers)}"
+                    monomer_info_text += f"\n{_('kayitli')}: {', '.join(found_monomers)}"
                 else:
-                    monomer_info_text += "\nTicari kayit kontrolu yapilmadi veya bulunamadi."
+                    monomer_info_text += f"\n{_('kayitli_degil')}"
             
             else:
-                st.warning("Yapısal ayrıştırma başarısız.")
-                monomer_info_text = "Yapısal ayrıştırma başarısız."
+                st.warning(f"{_('retro_auto_failed')}")
+                monomer_info_text = f"{_('retro_auto_failed')}"
 
             st.session_state['retro_manual_text'] = monomer_info_text
 
@@ -2008,18 +2099,18 @@ if models:
             
             st.divider()
 
-            st.subheader("2. T5-Model Tahmini ")
-            st.caption("Eğittiğimiz model, moleküler yapıyı analiz ederek monomerleri tahmin ediyor.")
+            st.subheader(f"{_('retro_t5_pred')}")
+            st.caption(f"{_('retro_t5_desc')}")
 
-            if st.button("Monomerleri Tahmin Et", type="primary"):
-                with st.spinner("Yapay zeka düşünüyor..."):
+            if st.button(f"{_('btn_predict_monomer')}", type="primary"):
+                with st.spinner(f"{_('msg_predicting')}..."):
                     prediction = predict_monomers_local(best_poly_data['smiles'])
                     
-                    st.success("Monomer Tahmini Başarılı!")
+                    st.success(f"{_('msg_success')}")
                     
                     st.markdown(f"""
                     <div style="background-color:#e8f5e9; padding:15px; border-radius:10px; border:1px solid #4CAF50;">
-                        <h4 style="color:#2e7d32; margin:0;">Önerilen Monomerler:</h4>
+                        <h4 style="color:#2e7d32; margin:0;">{_('proposed_monomers')}</h4>
                         <code style="font-size:1.1em; color:#1b5e20; background-color:#e8f5e9;">{prediction}</code>
                     </div>
                     """, unsafe_allow_html=True)
@@ -2027,8 +2118,8 @@ if models:
                     monomers_list = prediction.split(' . ') 
                     img_retro = draw_retrosynthesis_grid(monomers_list)
                     if img_retro:
-                        st.image(img_retro, caption="Modelin Önerdiği Yapı Taşları")
-                    st.session_state['retro_manual_text'] = f"AI Tahmini: {prediction}"
+                        st.image(img_retro, caption=f"{_('predicted_monomers_image_caption')}")
+                    st.session_state['retro_manual_text'] = f"{_('predicted_monomers')}: {prediction}"
 
 
 
