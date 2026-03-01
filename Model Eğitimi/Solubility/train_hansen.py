@@ -54,7 +54,7 @@ y = df['PARAMETRO'].values
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 modeller = {
-    "XGBoost": xgb.XGBRegressor(n_estimators=500, learning_rate=0.05, max_depth=6, subsample=0.8, random_state=42, n_jobs=-1),
+    "XGBoost": xgb.XGBRegressor(n_estimators=1155, learning_rate=0.06840304292333116, max_depth=10, subsample=0.9988910981196208, colsample_bytree=0.9594208739956043, min_child_weight=1, gamma=3.180817839721346e-07, random_state=42, n_jobs=-1),
     "Random Forest": RandomForestRegressor(n_estimators=500, random_state=42, n_jobs=-1),
     "LightGBM": lgb.LGBMRegressor(n_estimators=500, learning_rate=0.05, max_depth=6, subsample=0.8, random_state=42, n_jobs=-1, verbose=-1),
     "MLP (Sinir Ağı)": MLPRegressor(hidden_layer_sizes=(256, 128, 64), max_iter=500, random_state=42),
@@ -100,4 +100,5 @@ for model_adi, temel_model in modeller.items():
     plt.legend(loc='upper left', fontsize=11)
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.tight_layout()
+
     plt.show()
