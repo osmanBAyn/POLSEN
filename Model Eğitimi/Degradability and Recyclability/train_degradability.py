@@ -10,10 +10,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.ensemble import RandomForestRegressor, HistGradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.linear_model import Ridge
 from sklearn.neural_network import MLPRegressor
+from lightgbm import LGBMRegressor
 
 df = pd.read_csv('polymer_degradability.csv')
 df = df.dropna(subset=['SMILES', 'score'])
@@ -22,18 +23,18 @@ def get_advanced_features(smiles):
     try:
         mol = Chem.MolFromSmiles(smiles)
         if mol is None: return None
-        
+
         res = {
             'TPSA': Descriptors.TPSA(mol),
             'MolLogP': Descriptors.MolLogP(mol),
             'MolWt': Descriptors.MolWt(mol),
             'NumRotatableBonds': Descriptors.NumRotatableBonds(mol)
         }
-        
+
         fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=1024)
         fp_arr = np.zeros((0,), dtype=np.int8)
         ConvertToNumpyArray(fp, fp_arr)
-        
+
         for i, val in enumerate(fp_arr):
             res[f'FP_{i}'] = val
         return res
@@ -64,7 +65,7 @@ models = {
         n_jobs=-1
     ),
     'Random Forest': RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1),
-    'LightGBM (Hist)': HistGradientBoostingRegressor(random_state=42),
+    'LightGBM': LGBMRegressor(n_estimators = 1400, learning_rate = 0.03, subsample = 0.8, colsample_bytree = 0.7, random_state=42, verbose=-1), # Hist yerine LGBMRegressor kullanıldı, terminali loga boğmaması için verbose=-1 eklendi
     'MLP (Neural Net)': MLPRegressor(hidden_layer_sizes=(200, 100), max_iter=500, random_state=42, early_stopping=True),
     'KNN': KNeighborsRegressor(n_neighbors=5, n_jobs=-1),
     'Ridge': Ridge(alpha=1.0)
@@ -77,14 +78,14 @@ for name, model in models.items():
         ('scaler', StandardScaler()),
         ('model', model)
     ])
-    
+
     pipe.fit(X_train, y_train)
     y_pred = pipe.predict(X_test)
-    
+
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
     r2 = r2_score(y_test, y_pred)
     performance_results.append({'Model': name, 'RMSE': rmse, 'R2 Score': r2})
-    
+
     plt.figure(figsize=(8, 6))
     plt.scatter(y_test, y_pred, alpha=0.5, color='teal')
     plt.plot([y.min(), y.max()], [y.min(), y.max()], 'r--', lw=2)
