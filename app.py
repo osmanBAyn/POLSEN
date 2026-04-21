@@ -39,23 +39,14 @@ import tempfile
 from rdkit import DataStructs
 from rdkit.Chem import Fragments
 from rdkit.Chem import GraphDescriptors
-
-# translations.py
-# Eski Hali:
-# from translations import LANGUAGES
-
-# Yeni Hali:
 from lang_dict import LANGUAGES
-
-# Session State'te dil ayarı yoksa TR olarak başlat
 if "lang" not in st.session_state:
     st.session_state["lang"] = "TR"
 
-# Çeviri fonksiyonumuz
+# ceviri
 def _(text_key):
     return LANGUAGES[st.session_state["lang"]].get(text_key, text_key)
 
-# Sidebar'a Dil Seçici Ekleyelim
 st.sidebar.markdown("### 🌍 Dil / Language")
 selected_lang = st.sidebar.selectbox(
     "Dil Seçimi / Select Language", 
@@ -96,10 +87,7 @@ def load_my_trained_model():
         return None, None
 
 def predict_monomers_local(polymer_smiles):
-    """
-    Önce eğitilmiş T5 modelini kullanır. 
-    Eğer sonuç başarısızsa kural tabanlı motoru devreye sokar.
-    """
+    #önce t5 sonra kural tabanlı
     print(f"--- [LOG] {time.strftime('%X')} - Girdi (Input) hazırlanıyor...", flush=True)
 
     tokenizer, model = load_my_trained_model()
@@ -167,7 +155,6 @@ COMMON_SOLVENTS_HANSEN = {
     f"{_('water')}": 29.7
 }
 def get_soluble_solvents(pred_val):
-    """Tahmin edilen Hansen değerine göre uygun çözücüleri bulur."""
     soluble_list = []
     swelling_list = [] 
     
@@ -181,7 +168,6 @@ def get_soluble_solvents(pred_val):
             
     return soluble_list, swelling_list
 def draw_2d_molecule(smiles):
-    """SMILES kodundan yüksek kaliteli 2D resim oluşturur."""
     try:
         mol = Chem.MolFromSmiles(smiles)
         if mol:
@@ -233,7 +219,7 @@ inject_custom_css()
 N_BITS = 2048 
 @st.cache_data
 def get_initial_population():
-    """Verisetini sadece bir kez indirir ve önbelleğe alır."""
+    # açılışta veri setini indirip ön belleğe al
     repo_id = "OsBaran/Polimer-Ozellik-Tahmini"
     tg_data = load_dataset(repo_id, split="Tg")
     df = tg_data.to_pandas()
@@ -247,7 +233,6 @@ def get_initial_population():
     return valid_selfies, raw_smiles 
 @st.cache_resource
 def load_critic_models():
-    """Tüm Eleştirmen (Critic) modellerini yükler."""
     models = {}
     try:
         models['Tg'] = joblib.load('xgb_tg.joblib')
@@ -272,9 +257,7 @@ def load_critic_models():
         return None
 
 def run_ga_silent(models, generations, targets, active_props, initial_pop, ranges_dict):
-    """
-    GA'yı grafik çizmeden (sessizce) çalıştırır. Çoklu testler için optimize edilmiştir.
-    """
+    # grafiksiz ga
     toolbox = base.Toolbox()
     toolbox.register("attr_selfies", random.choice, initial_pop)
     toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_selfies, n=1)
@@ -317,9 +300,7 @@ def run_ga_silent(models, generations, targets, active_props, initial_pop, range
 
     return best_fitness_history
 def run_mass_random_test(models, generations, initial_pop, ranges_dict, num_trials=100):
-    """
-    Rastgele hedeflerle 100 kez stres testi yapar.
-    """
+    # 100 test için
     results = []
     all_props_list = list(ranges_dict.keys())
     
@@ -387,9 +368,6 @@ def get_morgan_fp(p_smiles):
 
 
 def get_gas_features_combined(smiles):
-    """
-    Gaz geçirgenliği LGBM modeli için Morgan FP
-    """
     try:
         mol = Chem.MolFromSmiles(smiles.replace('*', '[H]'))
         if mol is None: return None
@@ -409,10 +387,7 @@ def get_gas_features_combined(smiles):
     except:
         return None
 
-# Sütun isimlerini dışarıda (global) bir kere tanımlıyoruz ki GA döngüsünde zaman kaybetmesin
-
 def get_degradability_features(smiles):
-    """Bozunabilirlik modeli için MAX HIZDA özellik çıkarımı (Pandas Yok)."""
     try:
         mol = Chem.MolFromSmiles(str(smiles).replace('*', '[H]'))
         if mol is None: return None
@@ -427,19 +402,16 @@ def get_degradability_features(smiles):
         fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=3, nBits=1024)
         final_arr = np.concatenate([desc_vals, np.array(fp)])
         
-        # PANDAS İPTAL: Doğrudan XGBoost'un sevdiği 2D Numpy Matrisini döndürüyoruz!
         return final_arr.reshape(1, -1)
     except:
         return None
 
 def get_recyclability_features(smiles):
-    """Yeni LGBM Recyclability modeli için MAX HIZDA özellik çıkarımı (Pandas Yok)."""
     try:
-        # DİKKAT: Eğitimdeki backbone hesabı '*' üzerinden yapıldığı için replace('*', '[H]') KULLANMIYORUZ!
         mol = Chem.MolFromSmiles(str(smiles))
         if mol is None: return None
 
-        # --- COMPUTATIONAL LENGTH METRICS ---
+        # computational length metrics
         n_total = mol.GetNumHeavyAtoms()
         inv_len_total = 1.0 / n_total if n_total > 0 else 0
 
@@ -457,7 +429,6 @@ def get_recyclability_features(smiles):
             inv_len_backbone = inv_len_total
             branching_ratio = 1.0
 
-        # --- Temel Fizikokimyasal Özellikler ---
         num_rings = mol.GetRingInfo().NumRings()
         num_aromatic_rings = Descriptors.NumAromaticRings(mol)
         num_aliphatic_rings = Descriptors.NumAliphaticRings(mol)
@@ -466,7 +437,6 @@ def get_recyclability_features(smiles):
         logp = Descriptors.MolLogP(mol)
         fraction_csp3 = Descriptors.FractionCSP3(mol)
 
-        # Eğitimdeki DİCT sırasının BİREBİR aynısı (İlk 10 kolon)
         desc_vals = [
             inv_len_total,
             inv_len_backbone,
@@ -480,25 +450,20 @@ def get_recyclability_features(smiles):
             fraction_csp3
         ]
 
-        # --- Morgan Fingerprints (Son 1024 kolon) ---
         fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=3, nBits=1024)
 
-        # Hızlıca birleştir ve 2D Numpy Matrisine çevir
         final_arr = np.concatenate([desc_vals, np.array(fp)])
         
         return final_arr.reshape(1, -1)
     except:
         return None
 def get_hansen_features(smiles):
-    """Hansen Çözünürlük modeli için BİREBİR EŞLEŞEN özellik çıkarımı (1030 Sütun)."""
     try:
         mol = Chem.MolFromSmiles(str(smiles).replace('*', '[H]'))
         if mol is None: return None
         
-        # 1. Morgan Fingerprint (Radius=2, nBits=1024)
         fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=1024)
         
-        # 2. Eğitim defterindeki 6 ekstra descriptor (Sırası birebir aynı)
         desc_vals = [
             Descriptors.MolWt(mol),
             Descriptors.MolLogP(mol),
@@ -508,10 +473,8 @@ def get_hansen_features(smiles):
             Descriptors.NumRotatableBonds(mol)
         ]
         
-        # 3. Önce FP, Sonra Descriptors olacak şekilde birleştir
         final_arr = np.concatenate([np.array(fp), desc_vals])
         
-        # XGBoost'un beklediği 2D Numpy formatı
         return final_arr.reshape(1, -1)
     except:
         return None
@@ -561,16 +524,16 @@ def evaluate_individual_optimized(individual, models, targets, active_props, ran
     fp = get_morgan_fp(s_smiles)
     
     gas_features = None
-    rec_features = None # Yeni eklenen satır
-    deg_features = None # Yeni eklenen satır
-    han_features = None # Yeni satır
+    rec_features = None 
+    deg_features = None 
+    han_features = None 
     if 'GasPerma' in active_props:
         gas_features = get_gas_features_combined(s_smiles)
-    if 'Recyclability' in active_props: # Yeni eklenen blok
+    if 'Recyclability' in active_props: 
         rec_features = get_recyclability_features(s_smiles)
-    if 'Degradability' in active_props: # Yeni eklenen blok
+    if 'Degradability' in active_props: 
         deg_features = get_degradability_features(s_smiles)
-    if 'Hansen' in active_props: # Yeni eklenen blok
+    if 'Hansen' in active_props: 
         han_features = get_hansen_features(s_smiles)
 
     if fp is None: return (1000.0)
@@ -585,12 +548,12 @@ def evaluate_individual_optimized(individual, models, targets, active_props, ran
                     preds[prop] = 10 ** log_pred 
                 else:
                     preds[prop] = 0.0
-            elif prop == 'Recyclability': # Yeni eklenen blok
+            elif prop == 'Recyclability': 
                 if rec_features is not None:
                     preds[prop] = models[prop].predict(rec_features)[0]
                 else:
                     preds[prop] = 0.0
-            elif prop == 'Degradability': # Yeni eklenen blok
+            elif prop == 'Degradability': 
                 if deg_features is not None:
                     preds[prop] = models[prop].predict(deg_features)[0]
                 else:
@@ -618,11 +581,6 @@ def evaluate_individual_optimized(individual, models, targets, active_props, ran
     FITNESS_CACHE[s_selfies] = result
     return result
 def run_random_benchmark(models, targets, active_props, initial_pop, ranges_dict, total_budget, batch_size=100):
-    """
-    GA ile adil kıyaslama için Rastgele Arama (Random Search) yapar.
-    total_budget: Toplam değerlendirme sayısı (GA'daki pop_size * generations)
-    batch_size: Grafik çizimi için her kaç adımda bir kayıt alınacağı (GA'daki pop_size kadar olmalı)
-    """
     history_random = []
     best_so_far = float('inf')
     
@@ -655,10 +613,6 @@ def run_random_benchmark(models, targets, active_props, initial_pop, ranges_dict
     return history_random
 
 def evaluate_individual_single_obj(individual, models, targets, active_props):
-    """
-    Seçilen hedeflere (active_props) olan toplam mesafeye (hata) göre değerlendirir.
-
-    """
     s_selfies = individual[0]
 
     s_smiles = selfies_to_smiles_safe(s_selfies)
@@ -695,9 +649,7 @@ if "FitnessMin" not in creator.__dict__:
     creator.create("Individual", list, fitness=creator.FitnessMin)
 
 def is_valid_polymer(selfies_str):
-    """
-    Hem kimyasal geçerliliği hem de polimer olma şartını (bağlantı noktaları) kontrol eder.
-    """
+    # kimyasal geçerlilik ve polimer olma kontrolü
     smiles = selfies_to_smiles_safe(selfies_str)
     if smiles is None: 
         return False
@@ -770,7 +722,6 @@ REACTION_SMARTS = [
 RDKit_REACTIONS = [rdChemReactions.ReactionFromSmarts(s) for s in REACTION_SMARTS]
 
 def chemically_valid_mutate(p_smi: str, reactions=RDKit_REACTIONS, attempts=6):
-    """Reaction tabanlı mutasyon uygular; başarısızsa fallback döner."""
     def sanitize_and_canonicalize(smiles):
         try:
             mol = Chem.MolFromSmiles(smiles)
@@ -828,13 +779,12 @@ def chemically_valid_mutate(p_smi: str, reactions=RDKit_REACTIONS, attempts=6):
 mutation_stats = {'SELFIES':0, 'REACTION':0, 'EXTEND':0, 'NEW':0}
 
 def generate_offspring(individual, initial_selfies, mutpb=0.05, extendpb=0.05, newpb=0.01, chempb=0.05):
-    """Mutasyon, zincir uzatma, yeni birey ve reaction mutasyonunu uygular."""
     # 1. SELFIES mutasyonu
     if random.random() < mutpb:
         individual = mutSelfies(individual)
         mutation_stats['SELFIES'] += 1
 
-    # 2. Reaction tabanlı mutasyon
+    # 2. Reaksiyon tabanlı mutasyon
     if random.random() < chempb:
         smi = selfies_to_smiles_safe(individual[0])
         if smi:
@@ -1001,12 +951,12 @@ def run_single_objective_flow(models, generations, targets, active_props, initia
                     preds[prop] = 10 ** log_pred
                 else:
                     preds[prop] = 0.0
-            elif prop == 'Recyclability': # Yeni eklenen blok
+            elif prop == 'Recyclability': 
                 if rec_features is not None:
                     preds[prop] = models[prop].predict(rec_features)[0]
                 else:
                     preds[prop] = 0.0
-            elif prop == 'Degradability': # Yeni eklenen blok
+            elif prop == 'Degradability':
                 if deg_features is not None:
                     preds[prop] = models[prop].predict(deg_features)[0]
                 else:
@@ -1025,10 +975,6 @@ def run_single_objective_flow(models, generations, targets, active_props, initia
 
 @st.cache_data
 def check_pubchem_availability(smiles: str):
-    """
-    Verilen SMILES için PubChem'de kayıtlı mı kontrol eder.
-    Yıldızları (*) temizleyerek arama yapar.
-    """
     clean_smi = smiles.replace('*', '') 
     
     url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{clean_smi}/cids/JSON"
@@ -1060,10 +1006,6 @@ def check_pubchem_availability(smiles: str):
     except Exception:
         return False, None, None
 def check_commercial_availability(query):
-    """
-    Verilen ismi veya SMILES'ı PubChem'de arar.
-    Ticari olarak satılıp satılmadığını (Vendor sayısı) kontrol eder.
-    """
     try:
         compounds = pcp.get_compounds(query, 'name')
         if not compounds:
@@ -1105,9 +1047,8 @@ def make_3d_view_with_reason(smiles):
         return None, f"Beklenmeyen bir hata: {e}"
 
 def get_ai_interpretation(api_key, smiles, preds, targets, active_props):
-    """Gemini API kullanarak polimer analizi yapar."""
     if not api_key:
-        return "⚠️ Analiz için lütfen sol menüden geçerli bir Google Gemini API Anahtarı giriniz."
+        return "Analiz için lütfen sol menüden geçerli bir Google Gemini API Anahtarı giriniz."
     
     try:
         genai.configure(api_key=api_key)
@@ -1142,12 +1083,9 @@ def get_ai_interpretation(api_key, smiles, preds, targets, active_props):
             return response.text
             
     except Exception as e:
-        return f"❌ AI Bağlantı Hatası: {str(e)}"
+        return f" AI Bağlantı Hatası: {str(e)}"
 
 def get_sa_score_local(p_smiles):
-    """
-    Eğer klasörde 'sascorer.py' varsa onu kullanır, yoksa hesaplama yapar.
-    """
     try:
         import sascorer
         smi_clean = str(p_smiles).replace('*', '[H]').replace('(*)', '[H]').replace('[*]', '[H]')
@@ -1163,10 +1101,6 @@ def get_sa_score_local(p_smiles):
         return min(score, 10.0)
 
 def calculate_green_score(smiles):
-    """
-    Polimerin potansiyel biyo-bozunurluğunu ve çevresel etkisini puanlar.
-    Puan: 1 (Çok Kötü/Kalıcı) - 10 (Mükemmel/Bozunabilir)
-    """
     mol = Chem.MolFromSmiles(smiles.replace('*', '[H]'))
     if not mol: return 0, "Hesaplanamadı", "#7f8c8d"
     
@@ -1211,10 +1145,7 @@ def calculate_green_score(smiles):
     return score, ", ".join(notes), color
 
 def create_radar_chart(preds, targets, active_props, ranges):
-    """
-    Hedeflenen özellikler ile tahmin edilen özellikleri karşılaştıran
-    havalı bir Radar (Spider) Grafiği çizer.
-    """
+    # hedefe ulaşma analizi
     categories = []
     target_values = []
     pred_values = []
@@ -1281,9 +1212,6 @@ def create_radar_chart(preds, targets, active_props, ranges):
     
     return fig
 def decompose_polymer(smiles):
-    """
-    Polimeri parçalar. v3.0: Üre ve Üretan bağlarını da tanır.
-    """
     clean_smi = smiles.replace('*', '[H]')
     mol = Chem.MolFromSmiles(clean_smi)
     if not mol: return None, "Geçersiz Molekül"
@@ -1340,7 +1268,7 @@ def decompose_polymer(smiles):
             "mechanism": "Asit + Amin -> Amid + Su"
         })
 
-    #VARSAYILAN 
+    # VARSAYILAN 
     if not breakdown_results:
         has_hetero = any(atom.GetSymbol() in ['N', 'O', 'S'] for atom in mol.GetAtoms())
         if has_hetero and "C=C" not in smiles:
@@ -1360,7 +1288,6 @@ def decompose_polymer(smiles):
             
     return breakdown_results
 def draw_retrosynthesis_grid(monomer_smiles_list):
-    """Monomerlerin listesini alır ve yan yana çizer."""
     mols = [Chem.MolFromSmiles(s) for s in monomer_smiles_list]
     mols = [m for m in mols if m is not None] 
     if not mols: return None
@@ -1374,8 +1301,7 @@ def draw_retrosynthesis_grid(monomer_smiles_list):
     return img
 
 def get_ai_retrosynthesis_guide(api_key, polymer_smiles, monomer_info):
-    """Gemini'den detaylı sentez rotası ister."""
-    if not api_key: return "⚠️ Detaylı sentez planı için API Key gerekli."
+    if not api_key: return "Detaylı sentez planı için API Key gerekli."
     
     try:
         genai.configure(api_key=api_key)
@@ -1414,7 +1340,6 @@ class PDFReport(FPDF):
         self.cell(0, 10, f'Sayfa {self.page_no()}', 0, 0, 'C')
 
 def clean_text(text):
-    """FPDF için Türkçe karakterleri ASCII'ye çevirir (Hızlı çözüm)"""
     replacements = {
         'ğ': 'g', 'Ğ': 'G', 'ü': 'u', 'Ü': 'U', 'ş': 's', 'Ş': 'S',
         'ı': 'i', 'İ': 'I', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C'
@@ -1493,10 +1418,7 @@ def create_pdf_report(poly_data, targets, active_props, ai_analysis_text, retro_
 
 @st.cache_data
 def get_reference_fingerprints(smiles_list):
-    """
-    Referans veri setindeki tüm SMILES'ların parmak izlerini önceden hesaplar ve önbelleğe alır.
-    Bu işlem sadece bir kez yapılır, böylece uygulama hızlanır.
-    """
+    # veri setindeki tüm polimerlerin fingerprintlerini hesaplama
     fps = []
     names = [] 
     
@@ -1512,9 +1434,7 @@ def get_reference_fingerprints(smiles_list):
     return fps, names
 
 def calculate_novelty_optimized(generated_smiles, ref_smiles_list):
-    """
-    Toplu Tanimoto benzerliği hesaplar.
-    """
+    # tanimoto benzerlik indisi
     gen_mol = Chem.MolFromSmiles(generated_smiles.replace('*', '[H]'))
     if not gen_mol: return 0.0, "Hesaplanamadı"
     gen_fp = AllChem.GetMorganFingerprintAsBitVect(gen_mol, 3, 2048)
@@ -1538,9 +1458,6 @@ models = load_critic_models()
 ALL_PROPS = list(models.keys()) 
 
 def add_synced_input(prop_key, label, min_val, max_val, default, step, is_int=False):
-    """Sidebar üzerinde bir slider ve number_input oluşturur; ikisini session_state üzerinden senkronlar.
-    Döndürülen değer her zaman current value (float/int) olur.
-    """
     s_key = f"{prop_key}_val"
     slider_key = f"{prop_key}_slider"
     num_key = f"{prop_key}_num"
@@ -1657,7 +1574,6 @@ if models:
         else:
             targets[prop] = st.sidebar.number_input(f'{_("target")} {prop}:', value=0.0)
 
-    # 3. GA Parametreleri
     generations = st.sidebar.slider(f'{_("sidebar_generations")}', 10, 300, 10)
 
     initial_selfies, reference_smiles = get_initial_population()
@@ -2120,6 +2036,3 @@ if models:
                     if img_retro:
                         st.image(img_retro, caption=f"{_('predicted_monomers_image_caption')}")
                     st.session_state['retro_manual_text'] = f"{_('predicted_monomers')}: {prediction}"
-
-
-
