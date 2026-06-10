@@ -7,6 +7,7 @@ Chemical Recyclability (ROP Enthalpy)
 | MLP              | `hidden_layer_sizes=(128,64)`, `max_iter=1000`                                                                                                        |
 | KNN              | `n_neighbors=5`                                                                                                                                       |
 | Ridge Regression | `alpha=1.0`                                                                                                                                           |
+
 Degradability
 | Model            | Hyperparameters                                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------------------ |
