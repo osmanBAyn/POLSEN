@@ -17,6 +17,7 @@ Degradability
 | MLP              | `hidden_layer_sizes=(200,100)`, `max_iter=500`                                                   |
 | KNN              | `n_neighbors=5`                                                                                  |
 | Ridge Regression | `alpha=1.0`                                                                                      |
+
 Hansen Solubility Parameter
 | Model            | Hyperparameters                                                                                                                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -26,6 +27,7 @@ Hansen Solubility Parameter
 | MLP              | `hidden_layer_sizes=(256,128,64)`, `max_iter=500`                                                                                                                                                 |
 | KNN              | `n_neighbors=5`                                                                                                                                                                                   |
 | Ridge Regression | `alpha=1.0`                                                                                                                                                                                       |
+
 Melting Temperature (Tm)
 | Model            | Hyperparameters                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
@@ -35,6 +37,7 @@ Melting Temperature (Tm)
 | MLP              | `hidden_layer_sizes=(100,50)`, `max_iter=500`                                                     |
 | KNN              | `n_neighbors=5`                                                                                   |
 | Ridge Regression | `alpha=1.0`                                                                                       |
+
 Glass Transition Temperature (Tg)
 | Model            | Hyperparameters                                                                                                                                                       |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -44,6 +47,7 @@ Glass Transition Temperature (Tg)
 | MLP              | `hidden_layer_sizes=(100,50)`, `max_iter=500`                                                                                                                         |
 | KNN              | `n_neighbors=5`                                                                                                                                                       |
 | Ridge Regression | `alpha=1.0`                                                                                                                                                           |
+
 Decomposition Temperature (Td)
 | Model            | Hyperparameters                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
@@ -53,6 +57,7 @@ Decomposition Temperature (Td)
 | MLP              | `hidden_layer_sizes=(100,50)`, `max_iter=500`                                                     |
 | KNN              | `n_neighbors=5`                                                                                   |
 | Ridge Regression | `alpha=1.0`                                                                                       |
+
 Refractive Index
 | Model            | Hyperparameters                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
@@ -62,6 +67,7 @@ Refractive Index
 | MLP              | `hidden_layer_sizes=(200,100)`, `max_iter=1000`                                                   |
 | KNN              | `n_neighbors=5`                                                                                   |
 | Ridge Regression | `alpha=1.0`                                                                                       |
+
 Limiting Oxygen Index (LOI)
 | Model            | Hyperparameters                                         |
 | ---------------- | ------------------------------------------------------- |
@@ -71,6 +77,7 @@ Limiting Oxygen Index (LOI)
 | MLP              | `hidden_layer_sizes=(200,100)`, `max_iter=1000`         |
 | KNN              | `n_neighbors=5`                                         |
 | Ridge Regression | `alpha=1.0`                                             |
+
 Thermal Conductivity and Coefficient of Thermal Expansion (CTE)
 | Model            | Hyperparameters                                         |
 | ---------------- | ------------------------------------------------------- |
@@ -80,6 +87,7 @@ Thermal Conductivity and Coefficient of Thermal Expansion (CTE)
 | MLP              | `hidden_layer_sizes=(200,100)`, `max_iter=1000`         |
 | KNN              | `n_neighbors=5`                                         |
 | Ridge Regression | `alpha=1.0`                                             |
+
 Gas Permeability
 | Model            | Hyperparameters                                          |
 | ---------------- | -------------------------------------------------------- |
@@ -89,6 +97,7 @@ Gas Permeability
 | MLP              | `hidden_layer_sizes=(200,100)`, `max_iter=1000`          |
 | KNN              | `n_neighbors=10`                                         |
 | Ridge Regression | `alpha=1.0`                                              |
+
 Dielectric Constant (EPS)
 | Model            | Hyperparameters                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
@@ -98,6 +107,7 @@ Dielectric Constant (EPS)
 | MLP              | `hidden_layer_sizes=(200,100)`, `max_iter=2000`                                                   |
 | KNN              | `n_neighbors=7`, `weights='distance'`                                                             |
 | Ridge Regression | `alpha=1.0`                                                                                       |
+
 Hildebrand Solubility Parameter
 | Model            | Hyperparameters                                         |
 | ---------------- | ------------------------------------------------------- |
@@ -107,6 +117,7 @@ Hildebrand Solubility Parameter
 | MLP              | `hidden_layer_sizes=(200,100)`, `max_iter=1000`         |
 | KNN              | `n_neighbors=5`                                         |
 | Ridge Regression | `alpha=1.0`                                             |
+
 Bandgap Bulk
 | Model            | Hyperparameters                                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------------------ |
@@ -116,6 +127,7 @@ Bandgap Bulk
 | MLP              | `hidden_layer_sizes=(100,50)`, `max_iter=500`                                                    |
 | KNN              | `n_neighbors=5`                                                                                  |
 | Ridge Regression | `alpha=1.0`                                                                                      |
+
 Bandgap Chain and Bandgap Crystal
 | Model            | Hyperparameters                                                                                                             |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
