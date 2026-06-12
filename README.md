@@ -7,4 +7,4 @@ Oluşturulan web sitesine https://polsen.me/ adresinden ulaşılabilir.
 ## Documentation
 
 For detailed model hyperparameters, see
-[./hyperparameters.md](./hyperparameters.md).
+[hyperparameters.md](./hyperparameters.md).
