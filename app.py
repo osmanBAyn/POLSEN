@@ -3304,55 +3304,56 @@ if models:
                         _xtb_smi = retro._linearize_multistar(_ver_smi)
                     except Exception:
                         _xtb_smi = None
-                if _vk or (_xtbt and _vexe):
-                    st.divider()
-                    st.subheader(f"{_('verify_title')}")
-                    st.caption(_('verify_desc'))
-                    if _ver_smi.count('*') > 2:
-                        st.caption(f"{_('verify_branched')}")
-                    if st.button(f"{_('verify_btn')}", key="verify_xtb_btn"):
-                        _checks = []
-                        if _xtbt and _vexe and _xtb_smi:
-                            with st.spinner(_('xtb_running')):
-                                _vres = _xtbt.verify_predictions(_xtb_smi, preds, _vexe)
-                            _checks += _vres.get('checks') or []
-                        if _vk:
-                            try:
-                                # skip properties van Krevelen itself now predicts: comparing a
-                                # value against its own source would trivially always agree
-                                _checks += [c for c in _vk.vk_verify(_ver_smi, preds)
-                                            if c.get('prop') not in ANALYTIC_PROPS]
-                            except Exception:
-                                pass
-                        st.session_state['verify_xtb'] = {'smiles': _ver_smi, 'checks': _checks}
-                    _vx = st.session_state.get('verify_xtb')
-                    if _vx and _vx.get('smiles') == best_poly_data['smiles']:
-                        _checks = _vx.get('checks') or []
-                        if not _checks:
-                            st.info(_('verify_none'))
-                        else:
-                            _vicon = {'ok': 'ok', 'warn': 'borderline', 'bad': 'diverges'}
-                            _vcols = st.columns(len(_checks))
-                            for _ci, _chk in enumerate(_checks):
-                                with _vcols[_ci]:
-                                    _mv = _chk['model']; _ev = _chk['estimate']; _un = _chk['unit']
-                                    _ic = _vicon.get(_chk['status'], '')
-                                    _meth = _chk.get('method', '')
-                                    if _chk['kind'] == 'lower_bound':
-                                        _cmp = f"≥ {_ev:.2f} {_un}".strip()
-                                        _sub = _('verify_floor')
-                                    else:
-                                        _band = f" ± {_chk['unc']:.2f}" if _chk.get('unc') else ""
-                                        _cmp = f"{_ev:.2f}{_band} {_un}".strip()
-                                        _sub = _('verify_independent')
-                                    st.markdown(f"""
-                                    <div class="metric-card" style="border-left:5px solid #16a085;">
-                                        <small>{_chk['prop']} {_ic}</small><br>
-                                        <h3 style="margin:0; padding:0;">{_mv:.2f} <span style="font-size:0.5em; opacity:0.6;">{_un}</span></h3>
-                                        <small style="opacity:0.7;">{_sub}: {_cmp}</small><br>
-                                        <small style="opacity:0.5; font-size:0.7em;">{_meth}</small>
-                                    </div>""", unsafe_allow_html=True)
-                            st.caption(_('verify_note'))
+                # if _vk or (_xtbt and _vexe):
+                    # st.divider()
+                    # st.subheader(f"{_('verify_title')}")
+                    # st.caption(_('verify_desc'))
+                    # if _ver_smi.count('*') > 2:
+                    #     st.caption(f"{_('verify_branched')}")
+                    # if st.button(f"{_('verify_btn')}", key="verify_xtb_btn"):
+                    #     _checks = []
+                    #     if _xtbt and _vexe and _xtb_smi:
+                    #         with st.spinner(_('xtb_running')):
+                    #             _vres = _xtbt.verify_predictions(_xtb_smi, preds, _vexe)
+                    #         _checks += _vres.get('checks') or []
+                    #     if _vk:
+                    #         try:
+                    #             # skip properties van Krevelen itself now predicts: comparing a
+                    #             # value against its own source would trivially always agree
+                    #             _checks += [c for c in _vk.vk_verify(_ver_smi, preds)
+                    #                         if c.get('prop') not in ANALYTIC_PROPS]
+                    #         except Exception:
+                    #             pass
+                    #     st.session_state['verify_xtb'] = {'smiles': _ver_smi, 'checks': _checks}
+                    # _vx = st.session_state.get('verify_xtb')
+                    # if _vx and _vx.get('smiles') == best_poly_data['smiles']:
+                    #     _checks = _vx.get('checks') or []
+                    #     if not _checks:
+                    #         st.info(_('verify_none'))
+                    #     else:
+                    #         _vicon = {'ok': 'ok', 'warn': 'borderline', 'bad': 'diverges'}
+                    #         _vcols = st.columns(len(_checks))
+                    #         for _ci, _chk in enumerate(_checks):
+                    #             with _vcols[_ci]:
+                    #                 _mv = _chk['model']; _ev = _chk['estimate']; _un = _chk['unit']
+                    #                 _ic = _vicon.get(_chk['status'], '')
+                    #                 _meth = _chk.get('method', '')
+                    #                 if _chk['kind'] == 'lower_bound':
+                    #                     _cmp = f"≥ {_ev:.2f} {_un}".strip()
+                    #                     _sub = _('verify_floor')
+                    #                 else:
+                    #                     _band = f" ± {_chk['unc']:.2f}" if _chk.get('unc') else ""
+                    #                     _cmp = f"{_ev:.2f}{_band} {_un}".strip()
+                    #                     _sub = _('verify_independent')
+                    #                 st.markdown(f"""
+                    #                 <div class="metric-card" style="border-left:5px solid #16a085;">
+                    #                     <small>{_chk['prop']} {_ic}</small><br>
+                    #                     <h3 style="margin:0; padding:0;">{_mv:.2f} <span style="font-size:0.5em; opacity:0.6;">{_un}</span></h3>
+                    #                     <small style="opacity:0.7;">{_sub}: {_cmp}</small><br>
+                    #                     <small style="opacity:0.5; font-size:0.7em;">{_meth}</small>
+                    #                 </div>""", unsafe_allow_html=True)
+                    #         st.caption(_('verify_note'))
+
         with tab2:
             col_2d, col_3d = st.columns(2)
             with col_2d:
