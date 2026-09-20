@@ -65,7 +65,7 @@ from lang_dict import LANGUAGES
 # =====================================================================================
 SHOW_RELIABILITY = False    # per-property reliability badges + legend + warnings AND the
                             #   "± typical error" bars on values (and their export columns)
-SHOW_APPLICABILITY = True   # applicability-domain banner: warn when the polymer is outside
+SHOW_APPLICABILITY = False   # applicability-domain banner: warn when the polymer is outside
                             #   the training distribution (extrapolation) -- see PROP_MAE/AD_*
 SHOW_MANUAL_ANALYSIS = True  # show the "Manual Polymer Analysis" expander
 SHOW_PARETO_TABLE = True   # show the Pareto-front table/plot in the Evolution tab (NSGA-II)
@@ -95,7 +95,7 @@ st.set_page_config(
 
 # Session State'te dil ayarı yoksa TR olarak başlat
 if "lang" not in st.session_state:
-    st.session_state["lang"] = "TR"
+    st.session_state["lang"] = "EN"
 
 # Çeviri 
 def _(text_key):
