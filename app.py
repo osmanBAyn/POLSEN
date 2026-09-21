@@ -60,9 +60,7 @@ warnings.filterwarnings("ignore")
 # Yeni Hali:
 from lang_dict import LANGUAGES
 
-# =====================================================================================
-# CONFIG -- toggle app features here (safe to edit before publishing)
-# =====================================================================================
+# CONFIG -- toggle app features here
 SHOW_RELIABILITY = False    # per-property reliability badges + legend + warnings AND the
                             #   "± typical error" bars on values (and their export columns)
 SHOW_APPLICABILITY = False   # applicability-domain banner: warn when the polymer is outside
@@ -84,16 +82,13 @@ USE_BAGGED_UNCERTAINTY = True   # load the bagged companion ensembles in models_
                           #   of lazily-loaded models; set False for a lightweight deploy (the
                           #   app then falls back to the global measured MAE for those).
 ENABLE_XTB = True         # in Manual Analysis, offer a GFN2-xTB quantum cross-check of the band gap
-                          #   & polarizability. Auto-hides where the xtb executable isn't installed
-                          #   (e.g. Streamlit Cloud), so it's safe to leave on. See validation/XTB_VALIDATION.md.
+                          #   & polarizability. Auto-hides where the xtb executable isn't installed (e.g. Streamlit Cloud)
 
-# set_page_config MUST be the first Streamlit command that renders anything,
-# so it comes before the sidebar language selector below.
+# set_page_config ilk renderlancak olmalı
 st.set_page_config(
     page_title="POLSEN",
 )
 
-# Session State'te dil ayarı yoksa TR olarak başlat
 if "lang" not in st.session_state:
     st.session_state["lang"] = "EN"
 
@@ -2651,7 +2646,8 @@ if models and SHOW_MANUAL_ANALYSIS:
                 _routes = retro.retro_decompose(_asmi)
                 if _routes:
                     _r = _routes[0]
-                    _vf = f"[{_('retro_verified')}]" if _r.get('verified', False) else f"[{_('retro_tentative_tag')}]"
+                    #_vf = f"[{_('retro_verified')}]" if _r.get('verified', False) else f"[{_('retro_tentative_tag')}]"
+                    _vf = f""
                     _rex = {True: f" · {_('retro_exact')}", False: f" · ≈ {_('retro_approx')}"}.get(_r.get('exact'), "")
                     st.info(f"{_vf} **{_('yontem')}:** {tr_retro(_r['type'])}  |  {tr_retro(_r['mechanism'])}{_rex}")
                     _img_r = draw_retrosynthesis_grid(_r['monomers'])
@@ -2669,56 +2665,56 @@ if models and SHOW_MANUAL_ANALYSIS:
                 else:
                     st.warning(f"{_('retro_auto_failed')}")
 
-                # --- Optional GFN2-xTB quantum cross-check (local only; auto-hides on cloud) ---
-                if ENABLE_XTB and str(_asmi).count('*') >= 2:
-                    try:
-                        import xtb_tools as _xtbt
-                        _xexe = _xtbt.find_xtb()
-                    except Exception:
-                        _xtbt, _xexe = None, None
-                    # branched (>2 '*') units are linearised along the main chain for xtb
-                    _mx_smi = str(_asmi)
-                    if _mx_smi.count('*') > 2:
-                        try:
-                            _mx_smi = retro._linearize_multistar(_mx_smi)
-                        except Exception:
-                            _mx_smi = None
-                    if _xtbt and _xexe and _mx_smi:
-                        st.divider()
-                        st.markdown(f"**{_('xtb_header')}**")
-                        st.caption(_('xtb_desc'))
-                        if str(_asmi).count('*') > 2:
-                            st.caption(f"{_('verify_branched')}")
-                        if st.button(f"{_('xtb_btn')}", key="manual_xtb_btn"):
-                            with st.spinner(_('xtb_running')):
-                                st.session_state['manual_xtb'] = _xtbt.crosscheck_one(_mx_smi, _xexe)
-                        _xr = st.session_state.get('manual_xtb')
-                        if _xr:
-                            if _xr.get('gap_inf') is None and _xr.get('alpha_vol') is None:
-                                st.warning(f"{_('xtb_failed')}: {_xr.get('error', '')}")
-                            else:
-                                _xc1, _xc2 = st.columns(2)
-                                with _xc1:
-                                    _mg = m_preds.get('BandgapChain')
-                                    _xg = _xr.get('gap_inf')
-                                    _mg_s = f"{_mg:.2f}" if _mg is not None else "–"
-                                    _xg_s = f"{_xg:.2f}" if _xg is not None else "–"
-                                    st.markdown(f"""
-                                    <div class="metric-card" style="border-left:5px solid #16a085;">
-                                        <small>{_('xtb_gap_label')}</small><br>
-                                        <h3 style="margin:0; padding:0;">{_xg_s} <span style="font-size:0.6em; opacity:0.6;">eV</span></h3>
-                                        <small style="opacity:0.7;">{_('xtb_model_label')}: {_mg_s} eV</small>
-                                    </div>""", unsafe_allow_html=True)
-                                with _xc2:
-                                    _av = _xr.get('alpha_vol')
-                                    _av_s = f"{_av:.3f}" if _av is not None else "–"
-                                    st.markdown(f"""
-                                    <div class="metric-card" style="border-left:5px solid #16a085;">
-                                        <small>{_('xtb_polar_label')}</small><br>
-                                        <h3 style="margin:0; padding:0;">{_av_s}</h3>
-                                        <small style="opacity:0.7;">{_('xtb_polar_hint')}</small>
-                                    </div>""", unsafe_allow_html=True)
-                                st.caption(_('xtb_note'))
+                # --- Optional GFN2-xTB quantum cross-check ---    
+                # if ENABLE_XTB and str(_asmi).count('*') >= 2:
+                #     try:
+                #         import xtb_tools as _xtbt
+                #         _xexe = _xtbt.find_xtb()
+                #     except Exception:
+                #         _xtbt, _xexe = None, None
+                #     # branched (>2 '*') units are linearised along the main chain for xtb
+                #     _mx_smi = str(_asmi)
+                #     if _mx_smi.count('*') > 2:
+                #         try:
+                #             _mx_smi = retro._linearize_multistar(_mx_smi)
+                #         except Exception:
+                #             _mx_smi = None
+                #     if _xtbt and _xexe and _mx_smi:
+                #         st.divider()
+                #         st.markdown(f"**{_('xtb_header')}**")
+                #         st.caption(_('xtb_desc'))
+                #         if str(_asmi).count('*') > 2:
+                #             st.caption(f"{_('verify_branched')}")
+                #         if st.button(f"{_('xtb_btn')}", key="manual_xtb_btn"):
+                #             with st.spinner(_('xtb_running')):
+                #                 st.session_state['manual_xtb'] = _xtbt.crosscheck_one(_mx_smi, _xexe)
+                #         _xr = st.session_state.get('manual_xtb')
+                #         if _xr:
+                #             if _xr.get('gap_inf') is None and _xr.get('alpha_vol') is None:
+                #                 st.warning(f"{_('xtb_failed')}: {_xr.get('error', '')}")
+                #             else:
+                #                 _xc1, _xc2 = st.columns(2)
+                #                 with _xc1:
+                #                     _mg = m_preds.get('BandgapChain')
+                #                     _xg = _xr.get('gap_inf')
+                #                     _mg_s = f"{_mg:.2f}" if _mg is not None else "–"
+                #                     _xg_s = f"{_xg:.2f}" if _xg is not None else "–"
+                #                     st.markdown(f"""
+                #                     <div class="metric-card" style="border-left:5px solid #16a085;">
+                #                         <small>{_('xtb_gap_label')}</small><br>
+                #                         <h3 style="margin:0; padding:0;">{_xg_s} <span style="font-size:0.6em; opacity:0.6;">eV</span></h3>
+                #                         <small style="opacity:0.7;">{_('xtb_model_label')}: {_mg_s} eV</small>
+                #                     </div>""", unsafe_allow_html=True)
+                #                 with _xc2:
+                #                     _av = _xr.get('alpha_vol')
+                #                     _av_s = f"{_av:.3f}" if _av is not None else "–"
+                #                     st.markdown(f"""
+                #                     <div class="metric-card" style="border-left:5px solid #16a085;">
+                #                         <small>{_('xtb_polar_label')}</small><br>
+                #                         <h3 style="margin:0; padding:0;">{_av_s}</h3>
+                #                         <small style="opacity:0.7;">{_('xtb_polar_hint')}</small>
+                #                     </div>""", unsafe_allow_html=True)
+                #                 st.caption(_('xtb_note'))
 
 # --- MANUEL POLİMER TAHMİN BÖLÜMÜ BAŞLANGICI ---
 # st.divider()
@@ -3834,12 +3830,12 @@ if models:
                            None: "n/a (step-growth / copolymer / branched)"}[_r0.get('exact')]
                     L.append(f"  route      : {tr_retro(_r0['type'])}")
                     L.append(f"  mechanism  : {tr_retro(_r0['mechanism'])}")
-                    L.append(f"  verified   : {'yes' if _r0.get('verified') else 'NO (tentative)'}")
+                    #L.append(f"  verified   : {'yes' if _r0.get('verified') else 'NO (tentative)'}")
                     L.append(f"  round-trip : {_ex}")
                     for _i, _mn in enumerate(_r0['monomers'], 1):
                         L.append(f"  monomer {_i}  : {_mn}")
                 else:
-                    L.append("  no route found (novel / ambiguous backbone -- treat as a novelty flag)")
+                    L.append("  no route found, ambigious backbone")
                 L.append("")
                 if SHOW_CHEM_REVIEW:
                     try:
